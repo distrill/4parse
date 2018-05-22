@@ -24,41 +24,48 @@ type comment struct {
 	threadID string `db:"thread_id"`
 }
 
+type commentData struct {
+	id        string `db:"id"`
+	dataType  string `db:"data_type"`
+	contents  string `db:"contents"`
+	commentID string `db:"comment_id"`
+}
+
 var baseURL = "http://boards.4chan.org/biz"
 
 func getDocument(url string) (*html.Node, error) {
-    resp, err := http.Get(url)
+	resp, err := http.Get(url)
 	if err != nil {
-        log.Fatal(err)
+		log.Fatal(err)
 	}
 
 	response, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
-        log.Fatal(err)
+		log.Fatal(err)
 	}
 
 	return html.Parse(strings.NewReader(string(response)))
 }
 
 func getAttr(n *html.Node, attr string) string {
-    for _, a := range n.Attr {
-        if a.Key == attr {
-            return a.Val
+	for _, a := range n.Attr {
+		if a.Key == attr {
+			return a.Val
 		}
 	}
 	return ""
 }
 
 func classIs(n *html.Node, value string) bool {
-    return getAttr(n, "class") == value
+	return getAttr(n, "class") == value
 }
 
 func titleIs(n *html.Node, value string) bool {
-    return getAttr(n, "title") == value
+	return getAttr(n, "title") == value
 }
 
 func nodeIs(n *html.Node, value string) bool {
-    return n.Type == html.ElementNode && n.Data == value
+	return n.Type == html.ElementNode && n.Data == value
 }
 
 func getThreadsForPage(url string, threads []string) []string {
@@ -114,7 +121,7 @@ func getThreadTitle(threadURL string) string {
 
 	var f func(*html.Node)
 	f = func(n *html.Node) {
-		if nodeIs(n,  "span") && classIs(n, "subject") && n.FirstChild != nil {
+		if nodeIs(n, "span") && classIs(n, "subject") && n.FirstChild != nil {
 			title = n.FirstChild.Data
 		}
 		for c := n.FirstChild; c != nil; c = c.NextSibling {
@@ -160,21 +167,21 @@ func getCommentImageURL(n *html.Node) string {
 
 // TODO: this is really fragile, this fucky path. There gotta be a better way
 func getPosterID(n *html.Node) string {
-    posterID := ""
+	posterID := ""
 
 	var f func(*html.Node)
 	f = func(n *html.Node) {
 		if nodeIs(n, "span") && classIs(n, "hand") && titleIs(n, "Highlight posts by this ID") {
-            posterID = n.FirstChild.Data
+			posterID = n.FirstChild.Data
 		}
 		for c := n.FirstChild; c != nil; c = c.NextSibling {
 			f(c)
-        }
-    }
+		}
+	}
 
-    f(n)
+	f(n)
 
-    return posterID
+	return posterID
 }
 
 func getCommentsInfo(threadURL string, threadID string) []comment {
@@ -208,9 +215,73 @@ func getCommentsInfo(threadURL string, threadID string) []comment {
 	return comments
 }
 
+/*
+ * comment data stuffs (greentexts and text content)
+ */
+func getGreentexts(n *html.Node, commentID string) []commentData {
+	greentexts := make([]commentData, 0)
+
+	for c := n.FirstChild; c != nil; c = c.NextSibling {
+		if c.Data == "span" {
+			greentexts = append(greentexts, commentData{
+				dataType:  "GREENTEXT",
+				contents:  c.FirstChild.Data,
+				commentID: commentID,
+			})
+		}
+	}
+	return greentexts
+}
+
+func getTextContents(n *html.Node, commentID string) []commentData {
+	textContents := make([]commentData, 0)
+
+	for c := n.FirstChild; c != nil; c = c.NextSibling {
+		if c.Data != "a" && c.Data != "span" && c.Data != "br" {
+			textContents = append(textContents, commentData{
+				dataType:  "TEXTCONTENT",
+				contents:  c.Data,
+				commentID: commentID,
+			})
+		}
+	}
+
+	return textContents
+
+}
+
+// returns greentexts, textcontents
+func getCommentData(threadURL string) []commentData {
+	greenTexts := make([]commentData, 0)
+	textContents := make([]commentData, 0)
+
+	doc, err := getDocument(threadURL)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	var f func(*html.Node)
+	f = func(n *html.Node) {
+
+		if n.Type == html.ElementNode && n.Data == "blockquote" {
+			commentID := getCommentID(n)
+			greenTexts = append(greenTexts, getGreentexts(n, commentID)...)
+			textContents = append(textContents, getTextContents(n, commentID)...)
+		}
+
+		for c := n.FirstChild; c != nil; c = c.NextSibling {
+			f(c)
+		}
+	}
+
+	f(doc)
+
+	return append(greenTexts, textContents...)
+}
+
 func main() {
 	ts := getThreads()
-    threads := map[string]bool{"904256": true, "4884770": true}
+	threads := map[string]bool{"904256": true, "4884770": true}
 	for _, t := range ts {
 		td := getThreadInfo(t)
 		if threads[td.id] == false {
@@ -221,6 +292,8 @@ func main() {
 			fmt.Println("COMMENTS:")
 			fmt.Println(comments)
 			fmt.Print("\n\n\n")
+			commentData := getCommentData(t)
+			fmt.Println(commentData)
 		}
 	}
 }
