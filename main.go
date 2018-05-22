@@ -27,26 +27,38 @@ type comment struct {
 var baseURL = "http://boards.4chan.org/biz"
 
 func getDocument(url string) (*html.Node, error) {
-	resp, err := http.Get(url)
+    resp, err := http.Get(url)
 	if err != nil {
-		log.Fatal(err)
+        log.Fatal(err)
 	}
 
 	response, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
-		log.Fatal(err)
+        log.Fatal(err)
 	}
 
 	return html.Parse(strings.NewReader(string(response)))
 }
 
 func getAttr(n *html.Node, attr string) string {
-	for _, a := range n.Attr {
-		if a.Key == attr {
-			return a.Val
+    for _, a := range n.Attr {
+        if a.Key == attr {
+            return a.Val
 		}
 	}
 	return ""
+}
+
+func classIs(n *html.Node, value string) bool {
+    return getAttr(n, "class") == value
+}
+
+func titleIs(n *html.Node, value string) bool {
+    return getAttr(n, "title") == value
+}
+
+func nodeIs(n *html.Node, value string) bool {
+    return n.Type == html.ElementNode && n.Data == value
 }
 
 func getThreadsForPage(url string, threads []string) []string {
@@ -102,7 +114,7 @@ func getThreadTitle(threadURL string) string {
 
 	var f func(*html.Node)
 	f = func(n *html.Node) {
-		if n.Type == html.ElementNode && n.Data == "span" && getAttr(n, "class") == "subject" && n.FirstChild != nil {
+		if nodeIs(n,  "span") && classIs(n, "subject") && n.FirstChild != nil {
 			title = n.FirstChild.Data
 		}
 		for c := n.FirstChild; c != nil; c = c.NextSibling {
@@ -139,7 +151,7 @@ func getCommentID(n *html.Node) string {
 
 func getCommentImageURL(n *html.Node) string {
 	for c := n.FirstChild; c != nil; c = c.NextSibling {
-		if c.Type == html.ElementNode && c.Data == "div" && getAttr(c, "class") == "file" {
+		if nodeIs(c, "div") && classIs(c, "file") {
 			return strings.Replace(getAttr(c.FirstChild.FirstChild.NextSibling, "href"), "//", "", 1)
 		}
 	}
@@ -148,12 +160,21 @@ func getCommentImageURL(n *html.Node) string {
 
 // TODO: this is really fragile, this fucky path. There gotta be a better way
 func getPosterID(n *html.Node) string {
-	for c := n.FirstChild; c != nil; c = c.NextSibling {
-		if c.Type == html.ElementNode && c.Data == "div" && getAttr(c, "class") == "postInfoM mobile" {
-			return c.FirstChild.NextSibling.FirstChild.NextSibling.NextSibling.FirstChild.NextSibling.FirstChild.Data
+    posterID := ""
+
+	var f func(*html.Node)
+	f = func(n *html.Node) {
+		if nodeIs(n, "span") && classIs(n, "hand") && titleIs(n, "Highlight posts by this ID") {
+            posterID = n.FirstChild.Data
 		}
-	}
-	return ""
+		for c := n.FirstChild; c != nil; c = c.NextSibling {
+			f(c)
+        }
+    }
+
+    f(n)
+
+    return posterID
 }
 
 func getCommentsInfo(threadURL string, threadID string) []comment {
@@ -167,7 +188,7 @@ func getCommentsInfo(threadURL string, threadID string) []comment {
 
 	var f func(*html.Node)
 	f = func(n *html.Node) {
-		if n.Type == html.ElementNode && n.Data == "blockquote" {
+		if nodeIs(n, "blockquote") {
 			cmt := comment{
 				getCommentID(n),
 				getCommentImageURL(n.Parent),
@@ -175,7 +196,6 @@ func getCommentsInfo(threadURL string, threadID string) []comment {
 				isOP,
 				threadID,
 			}
-			fmt.Println(cmt)
 			comments = append(comments, cmt)
 			isOP = false
 		}
@@ -190,11 +210,10 @@ func getCommentsInfo(threadURL string, threadID string) []comment {
 
 func main() {
 	ts := getThreads()
-	// ts := []string{"http://boards.4chan.org/biz/thread/9537535/im-gonna-make-cuff-links-cause-of-some-faggot-i"}
-	threads := make(map[string]bool)
+    threads := map[string]bool{"904256": true, "4884770": true}
 	for _, t := range ts {
 		td := getThreadInfo(t)
-		if threads[td.id] == false && td.id != "904256" && td.id != "4884770" {
+		if threads[td.id] == false {
 			fmt.Println("THREAD:")
 			fmt.Println(td)
 			threads[td.id] = true
