@@ -31,6 +31,12 @@ type commentData struct {
 	commentID string `db:"comment_id"`
 }
 
+type commentReference struct {
+	id              string `db:"id"`
+	parentCommentID string `db:"parent_comment_id"`
+	childCommentID  string `db:"child_comment_id"`
+}
+
 var baseURL = "http://boards.4chan.org/biz"
 
 func getDocument(url string) (*html.Node, error) {
@@ -250,7 +256,7 @@ func getTextContents(n *html.Node, commentID string) []commentData {
 
 }
 
-// returns greentexts, textcontents
+// returns [greentexts..., textcontents...]
 func getCommentData(threadURL string) []commentData {
 	greenTexts := make([]commentData, 0)
 	textContents := make([]commentData, 0)
@@ -279,8 +285,53 @@ func getCommentData(threadURL string) []commentData {
 	return append(greenTexts, textContents...)
 }
 
+/*
+ * comment reference stuffs
+ */
+func getReferences(n *html.Node, parentCommentID string) []commentReference {
+	references := make([]commentReference, 0)
+
+	for c := n.FirstChild; c != nil; c = c.NextSibling {
+		if c.Data == "a" {
+			references = append(references, commentReference{
+				parentCommentID: parentCommentID,
+				childCommentID:  strings.Replace(getAttr(c, "href"), "#p", "", -1),
+			})
+		}
+	}
+
+	return references
+}
+
+func getCommentReferences(threadURL string) []commentReference {
+	references := make([]commentReference, 0)
+
+	doc, err := getDocument(threadURL)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	var f func(*html.Node)
+	f = func(n *html.Node) {
+
+		if n.Type == html.ElementNode && n.Data == "blockquote" {
+			commentID := getCommentID(n)
+			references = append(references, getReferences(n, commentID)...)
+		}
+
+		for c := n.FirstChild; c != nil; c = c.NextSibling {
+			f(c)
+		}
+	}
+
+	f(doc)
+
+	return references
+}
+
 func main() {
 	ts := getThreads()
+	// ts := []string{"http://boards.4chan.org/biz/thread/9571452"}
 	threads := map[string]bool{"904256": true, "4884770": true}
 	for _, t := range ts {
 		td := getThreadInfo(t)
@@ -291,9 +342,13 @@ func main() {
 			comments := getCommentsInfo(t, td.id)
 			fmt.Println("COMMENTS:")
 			fmt.Println(comments)
-			fmt.Print("\n\n\n")
 			commentData := getCommentData(t)
+			fmt.Println("COMMENT_DATA")
 			fmt.Println(commentData)
+			commentReferences := getCommentReferences(t)
+			fmt.Println("COMMENT_REFERENCES")
+			fmt.Println(commentReferences)
+			fmt.Print("\n\n\n")
 		}
 	}
 }
